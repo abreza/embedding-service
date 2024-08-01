@@ -1,0 +1,7 @@
+services:
+  embedding-service:
+    build: .
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - 8001:8000
