@@ -4,9 +4,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y git wget
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 RUN mkdir -p /app/model
 
 RUN wget -O /app/model/config.json https://huggingface.co/intfloat/multilingual-e5-large/resolve/main/onnx/config.json
@@ -16,6 +13,9 @@ RUN wget -O /app/model/sentencepiece.bpe.model https://huggingface.co/intfloat/m
 RUN wget -O /app/model/special_tokens_map.json https://huggingface.co/intfloat/multilingual-e5-large/resolve/main/onnx/special_tokens_map.json
 RUN wget -O /app/model/tokenizer.json https://huggingface.co/intfloat/multilingual-e5-large/resolve/main/onnx/tokenizer.json
 RUN wget -O /app/model/tokenizer_config.json https://huggingface.co/intfloat/multilingual-e5-large/resolve/main/onnx/tokenizer_config.json
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
