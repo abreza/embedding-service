@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package embedding;
+
+service EmbeddingService {
+  rpc GenerateEmbedding(EmbeddingRequest) returns (EmbeddingResponse) {}
+}
+
+message EmbeddingRequest { string text = 1; }
+
+message EmbeddingResponse { repeated float embedding = 1; }

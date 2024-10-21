@@ -1,5 +1,5 @@
-fastapi==0.115.2
+grpcio==1.67.0
+grpcio-tools==1.67.0
 onnxruntime==1.19.2
 torch==2.5.0
 transformers==4.45.2
-uvicorn==0.32.0

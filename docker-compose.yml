@@ -2,12 +2,6 @@ services:
   embedding-service:
     build: .
     ports:
-      - "8001:8000"
+      - "50051:50051"
     environment:
       - PYTHONUNBUFFERED=1
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
