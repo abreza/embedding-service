@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from transformers import AutoTokenizer
 import logging
 import time
+import os
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -12,11 +13,19 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-model_path = '/app/model'
+MODEL_PATH = '/app/model'
 logger.info("Loading tokenizer and ONNX model...")
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-ort_session = ort.InferenceSession("/app/model/model.onnx")
-logger.info("Tokenizer and ONNX model loaded successfully")
+
+if not os.path.exists(MODEL_PATH):
+    raise FileNotFoundError(f"Model directory not found: {MODEL_PATH}")
+
+try:
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    ort_session = ort.InferenceSession("/app/model/model.onnx")
+    logger.info("Tokenizer and ONNX model loaded successfully")
+except Exception as e:
+    logger.error(f"Error loading model: {str(e)}")
+    raise
 
 
 class EmbeddingRequest(BaseModel):
@@ -62,6 +71,11 @@ async def generate_embedding(request: EmbeddingRequest):
     except Exception as e:
         logger.error(f"Error generating embedding: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn
