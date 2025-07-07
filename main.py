@@ -1,75 +1,105 @@
-import grpc
-from concurrent import futures
+import threading
 import time
-import logging
+from concurrent.futures import ThreadPoolExecutor
+
+import grpc
 import numpy as np
 import onnxruntime as ort
+from fastapi import FastAPI
+from pydantic import BaseModel
 from transformers import AutoTokenizer
+import uvicorn
 
-import embedding_service_pb2
-import embedding_service_pb2_grpc
+import embedding_service_pb2 as pb2
+import embedding_service_pb2_grpc as pb2_grpc
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-MODEL_PATH = '/app/model'
+MODEL_PATH = "/app/model"
+GRPC_PORT = 50051
+HTTP_PORT = 8000
 
 
-class EmbeddingService(embedding_service_pb2_grpc.EmbeddingServiceServicer):
+class EmbeddingBackend:
     def __init__(self):
-        logger.info("Loading tokenizer and ONNX model...")
         self.tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-        self.ort_session = ort.InferenceSession("/app/model/model.onnx")
-        logger.info("Tokenizer and ONNX model loaded successfully")
+        self.session = ort.InferenceSession(f"{MODEL_PATH}/model.onnx")
 
-    def average_pool(self, last_hidden_states, attention_mask):
-        last_hidden = last_hidden_states * attention_mask[..., None]
-        return last_hidden.sum(axis=1) / attention_mask.sum(axis=1)[..., None]
+    def _average_pool(self, hidden, mask):
+        hidden = hidden * mask[..., None]
+        return hidden.sum(1) / mask.sum(1)[..., None]
+
+    def generate(self, text: str) -> np.ndarray:
+        inputs = self.tokenizer(
+            f"passage: {text}",
+            max_length=512,
+            padding=True,
+            truncation=True,
+            return_tensors="np",
+        )
+        outputs = self.session.run(
+            None,
+            {
+                "input_ids": inputs["input_ids"],
+                "attention_mask": inputs["attention_mask"],
+            },
+        )[0]
+        emb = self._average_pool(outputs, inputs["attention_mask"])
+        emb /= np.linalg.norm(emb, axis=1, keepdims=True)
+        return emb.squeeze()
+
+
+class EmbeddingGRPCServicer(pb2_grpc.EmbeddingServiceServicer):
+    def __init__(self, backend: EmbeddingBackend):
+        self.backend = backend
 
     def GenerateEmbedding(self, request, context):
-        start_time = time.time()
-        logger.info(
-            f"Received embedding request for text: {request.text[:50]}...")
+        start = time.time()
         try:
-            inputs = self.tokenizer(f"passage: {request.text}", max_length=512,
-                                    padding=True, truncation=True, return_tensors='np')
-
-            ort_inputs = {
-                'input_ids': inputs['input_ids'],
-                'attention_mask': inputs['attention_mask']
-            }
-            ort_outputs = self.ort_session.run(None, ort_inputs)
-            last_hidden_state = ort_outputs[0]
-
-            embeddings = self.average_pool(
-                last_hidden_state, inputs['attention_mask'])
-            embeddings = embeddings / \
-                np.linalg.norm(embeddings, axis=1, keepdims=True)
-
-            end_time = time.time()
-            processing_time = end_time - start_time
-            logger.info(
-                f"Embedding generated successfully. Processing time: {processing_time:.2f} seconds")
-
-            return embedding_service_pb2.EmbeddingResponse(embedding=embeddings.squeeze().tolist())
-        except Exception as e:
-            logger.error(
-                f"Error generating embedding: {str(e)}", exc_info=True)
-            context.set_details(str(e))
-            context.set_code(grpc.StatusCode.INTERNAL)
-            return embedding_service_pb2.EmbeddingResponse()
+            vec = self.backend.generate(request.text).tolist()
+            return pb2.EmbeddingResponse(embedding=vec)
+        finally:
+            duration = time.time() - start
+            print(f"[gRPC] processed in {duration:.2f}s")
 
 
-def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    embedding_service_pb2_grpc.add_EmbeddingServiceServicer_to_server(
-        EmbeddingService(), server)
-    server.add_insecure_port('[::]:50051')
+def start_grpc(backend: EmbeddingBackend):
+    server = grpc.server(ThreadPoolExecutor(max_workers=10))
+    pb2_grpc.add_EmbeddingServiceServicer_to_server(
+        EmbeddingGRPCServicer(backend), server
+    )
+    server.add_insecure_port(f"[::]:{GRPC_PORT}")
     server.start()
-    logger.info("gRPC server started on port 50051")
-    server.wait_for_termination()
+    print(f"gRPC server ready on :{GRPC_PORT}")
+    return server
 
 
-if __name__ == '__main__':
-    serve()
+class HTTPEmbeddingRequest(BaseModel):
+    text: str
+
+
+def create_http_app(backend: EmbeddingBackend) -> FastAPI:
+    app = FastAPI(title="Embedding Service")
+
+    @app.post("/embed")
+    async def embed(req: HTTPEmbeddingRequest):
+        vec = backend.generate(req.text).tolist()
+        return {"embedding": vec}
+
+    return app
+
+
+def start_http(app: FastAPI):
+    thread = threading.Thread(
+        target=uvicorn.run,
+        kwargs=dict(app=app, host="0.0.0.0", port=HTTP_PORT, log_level="info"),
+        daemon=True,
+    )
+    thread.start()
+    print(f"HTTP server ready on :{HTTP_PORT}")
+
+
+if __name__ == "__main__":
+    backend = EmbeddingBackend()
+    grpc_server = start_grpc(backend)
+    start_http(create_http_app(backend))
+
+    grpc_server.wait_for_termination()
