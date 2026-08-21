@@ -1,4 +1,4 @@
-name: Estimator Service CI/CD with Deployment
+name: Embedding Service CI/CD with Deployment
 
 on:
   push:
@@ -43,5 +43,5 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /home/ubuntu/codekav-deploy
-            docker-compose pull estimator-service
-            docker-compose up -d estimator-service
+            docker-compose pull embedding-service
+            docker-compose up -d embedding-service
